@@ -7,54 +7,96 @@
 ```
 OPTIONS rtsp://example.com/media.sdp RTSP/1.0
 CSeq: 1
+User-Agent: Lavf60.3.100
 ```
 服务器返回支持的方法列表。
 ```
 RTSP/1.0 200 OK
 CSeq: 1
+Session: f2gP-LrSR
 Public: DESCRIBE, SETUP, TEARDOWN, PLAY, PAUSE, OPTIONS, ANNOUNCE, RECORD
 
 ```
 ### 2.发送描述：
 客户端发送 ANNOUNCE 请求，将媒体描述（如 SDP 描述）发送到服务器。
 ```
-DESCRIBE rtsp://example.com/media.sdp RTSP/1.0
+ANNOUNCE rtsp://example.com/media.sdp RTSP/1.0
+Content-Type: application/sdp
 CSeq: 2
-Accept: application/sdp
+User-Agent: Lavf60.3.100
+Session: f2gP-LrSR
+Content-Length: 494
+
+v=0
+o=- 0 0 IN IP4 127.0.0.1
+s=No Name
+c=IN IP4 127.0.0.1
+t=0 0
+a=tool:libavformat 60.3.100
+m=video 0 RTP/AVP 96
+b=AS:3461
+a=rtpmap:96 H264/90000
+a=fmtp:96 packetization-mode=1; sprop-parameter-sets=Z01AKZZWA8ARPyykBAQFAAADA+kAAOpghA==,aMqNSA==; profile-level-id=4D4029
+a=control:streamid=0
+m=audio 0 RTP/AVP 97
+b=AS:189
+a=rtpmap:97 MPEG4-GENERIC/48000/2
+a=fmtp:97 profile-level-id=1;mode=AAC-hbr;sizelength=13;indexlength=3;indexdeltalength=3; config=1190
+a=control:streamid=1
 ```
 服务器确认接收 ANNOUNCE 请求。
 ```
 RTSP/1.0 200 OK
 CSeq: 2
-Content-Base: rtsp://example.com/media.sdp
-Content-Type: application/sdp
-Content-Length: 460
-
-v=0
-o=- 2890844526 2890842807 IN IP4 127.0.0.1
-s=RTSP Session
-m=video 0 RTP/AVP 96
-a=control:streamid=0
-m=audio 0 RTP/AVP 97
-a=control:streamid=1
+Session: f2gP-LrSR
 ```
 ### 3.设置传输参数：
 客户端发送 SETUP 请求，指定传输的详细信息（如传输协议、端口等）。
+```
+SETUP rtsp://127.0.0.1:554/stream/streamid=0 RTSP/1.0
+Transport: RTP/AVP/TCP;unicast;interleaved=0-1;mode=record
+CSeq: 3
+User-Agent: Lavf60.3.100
+Session: f2gP-LrSR
+```
+### 4.服务器返回传输参数的确认信息。
+```
+RTSP/1.0 200 OK
+CSeq: 3
+Session: f2gP-LrSR
+Transport: RTP/AVP/TCP;unicast;interleaved=0-1;mode=record
+```
+### 5.设置传输参数：
+客户端发送 SETUP 请求，指定传输的详细信息（如传输协议、端口等）
+```
+SETUP rtsp://127.0.0.1:554/stream/streamid=1 RTSP/1.0
+Transport: RTP/AVP/TCP;unicast;interleaved=2-3;mode=record
+CSeq: 4
+User-Agent: Lavf60.3.100
+Session: f2gP-LrSR
+```
+### 6.服务器返回传输参数的确认信息。
+```
+RTSP/1.0 200 OK
+CSeq: 4
+Session: f2gP-LrSR
+Transport: RTP/AVP/TCP;unicast;interleaved=2-3;mode=record
+```
 
-服务器返回传输参数的确认信息。
-
-### 4.开始推流：
+### 7.开始推流：
 客户端发送 RECORD 请求开始推流。
 ``` 
-RECORD rtsp://example.com/media.sdp RTSP/1.0
+RECORD rtsp://127.0.0.1:554/stream RTSP/1.0
+Range: npt=0.000-
 CSeq: 5
-Session: 12345678
+User-Agent: Lavf60.3.100
+Session: f2gP-LrSR
 ```
-服务器返回确认信息，表示可以开始传输媒体数据。
+### 8.服务器返回确认信息，表示可以开始传输媒体数据。
 ``` 
 RTSP/1.0 200 OK
 CSeq: 5
-Session: 12345678
+Session: f2gP-LrSR
 ```
 客户端通过 RTP/RTCP 传输媒体流到服务器。
 
