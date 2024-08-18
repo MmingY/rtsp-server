@@ -45,6 +45,14 @@ type Request struct {
 	Header  map[string]string
 	Content string
 	Body    string
+	Transport
+}
+
+type Transport struct {
+	Protocol    string
+	ClientPort  string
+	Mode        string
+	Interleaved string
 }
 
 func NewRequest(content string) *Request {
@@ -69,13 +77,28 @@ func NewRequest(content string) *Request {
 		}
 		header[headerItems[0]] = headerItems[1]
 	}
+	var transport Transport
+	if items[0] == "SETUP" {
+		//Transport: RTP/AVP/UDP;unicast;client_port=8428-8429;mode=record
+		temp1 := strings.Split(content, "Transport:")[1]
+		transportStr := strings.Split(temp1, "\r\n")[0]
+		transportArry := strings.Split(transportStr, ";")
+		transport.Protocol = transportArry[0]
+		transport.ClientPort = strings.Replace(transportArry[2], "client_port=", "", -1)
+		transport.Mode = transportArry[3]
+
+		if strings.Contains(transportStr, "interleaved") {
+			transport.Interleaved = strings.Replace(transportArry[2], "interleaved=", "", -1)
+		}
+	}
 	return &Request{
-		Method:  items[0],
-		URL:     items[1],
-		Version: items[2],
-		Header:  header,
-		Content: content,
-		Body:    "",
+		Method:    items[0],
+		URL:       items[1],
+		Version:   items[2],
+		Header:    header,
+		Content:   content,
+		Body:      "",
+		Transport: transport,
 	}
 }
 

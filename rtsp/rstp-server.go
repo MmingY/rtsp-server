@@ -2,89 +2,155 @@ package rtsp_server
 
 import (
 	"bufio"
+	"bytes"
+	"crypto/rand"
+	"encoding/binary"
+	"encoding/hex"
 	"fmt"
+	"io"
 	"net"
 	"strings"
+	"time"
 )
 
 const (
 	rtspPort = 8554
 )
 
+type RtspSession struct {
+	sessionId    string
+	RtpVideoPort int
+	RtpAudioPort int
+	StreamID     string        // 流ID
+	Timeout      time.Duration // 会话超时时间
+}
+
+// RTPInfo 代表RTP信息
+type RTPInfo struct {
+	SSRC      uint32 // RTP同步源标识符
+	PT        uint8  // RTP有效负载类型
+	Payload   []byte // RTP负载数据
+	Timestamp uint32 // RTP时间戳
+	Sequence  uint16 // RTP序列号
+}
+
 func HandleConnection(conn net.Conn) {
 	defer conn.Close()
 
+	id, err := GenerateSessionID()
+	if err != nil {
+		fmt.Println("generate session ID error", err)
+		return
+	}
+	id = "f2gP-LrSR"
+	rtspSession := &RtspSession{
+		sessionId: id,
+	}
 	reader := bufio.NewReader(conn)
+	buf := make([]byte, 1)
+	rtpLen := make([]byte, 2)
 	for {
 
-		//OPTIONS rtsp://example.com/media.sdp RTSP/1.0
-		//CSeq: 1
-
-		requestLine, err := reader.ReadString('\n')
-		if err != nil {
-			fmt.Println("Error reading requset:", err)
-			return
-		}
-		fmt.Println("requestLine:" + requestLine)
-		// OPTIONS rtsp://localhost:8554/test RTSP/1.0
-		requestLine = strings.TrimSpace(requestLine)
-
-		//parse the RTSP
-
-		parts := strings.Split(requestLine, " ")
-		if len(parts) < 3 {
-			fmt.Println("Invalid request line:", requestLine)
+		if _, err = io.ReadFull(conn, buf); err != nil {
+			fmt.Println("RTP error:", err)
 			return
 		}
 
-		method := parts[0]   //OPTIONS
-		uri := parts[1]      //rtsp://localhost:8554/test
-		protocol := parts[2] //协议和版本RTSP/1.0
-
-		//parse headers
-		headers := make(map[string]string)
-
-		for {
-			line, err := reader.ReadString('\n')
-			if err != nil {
-				fmt.Println("Error reading header", err)
+		if buf[0] == 0x24 { //RTP
+			if _, err = io.ReadFull(conn, buf); err != nil {
+				fmt.Println("RTP error:", err)
 				return
 			}
+			channelId := int(buf[0])
+			handleRTP(conn, &rtpLen, channelId)
+		} else { //RTSP
+			// OPTIONS rtsp://localhost:8554/test RTSP/1.0
+			var method string   //OPTIONS
+			var uri string      //rtsp://localhost:8554/test
+			var protocol string //协议和版本RTSP/1.0
 
-			line = strings.TrimSpace(line)
-			if line == "" {
-				break
+			//parse the RTSP
+			reqBuf := bytes.NewBuffer(nil)
+			reqBuf.Write(buf)
+
+			var request *Request
+			for {
+				//parse headers
+				line, isPrefix, err := reader.ReadLine()
+				if err != nil {
+					fmt.Println("Error reading header", err)
+					return
+				}
+				reqBuf.Write(line)
+				if !isPrefix {
+					reqBuf.WriteString("\r\n")
+				}
+
+				if len(line) == 0 {
+					request = NewRequest(reqBuf.String())
+					fmt.Println("request byte:", reqBuf.Bytes())
+					contentLen := request.GetContentLength()
+					//处理请求body中的数据
+					if contentLen > 0 {
+						bodyBuf := make([]byte, contentLen)
+						if bodyLen, err := io.ReadFull(conn, bodyBuf); err != nil {
+							fmt.Println("Error reading body:", err)
+						} else if bodyLen != contentLen {
+							fmt.Println("read rtsp request body failed, expect size[%d], got size[%d]", contentLen, bodyLen)
+						}
+						request.Body = string(bodyBuf)
+					}
+					//headers[request] = headerParts[1]
+					protocol = request.Version
+					uri = request.URL
+					break
+				}
+
 			}
 
-			headerParts := strings.SplitN(line, ": ", 2)
-			if len(headerParts) != 2 {
-				continue
+			switch request.Method {
+			case "OPTIONS":
+				fmt.Println(" Options:", request)
+				handleOptions(conn, protocol)
+			case "ANNOUNCE":
+				fmt.Println(" ANNOUNCE:", request)
+				handleAnnounce(conn, rtspSession)
+			case "DESCRIBE":
+				fmt.Println(" DESCRIBE:", request)
+				handleDescribe(conn, protocol, uri)
+			case "SETUP":
+				fmt.Println(" SETUP:", request)
+				handleSetup(conn, rtspSession, request)
+			case "RECORD":
+				fmt.Println(" RECORD:", request)
+				handleRecord(conn, rtspSession)
+			case "TEARDOWN":
+				handleTeardown(conn, rtspSession)
+			default:
+				fmt.Println("Unhandled method:", method)
 			}
-			headers[headerParts[0]] = headerParts[1]
-		}
-
-		switch method {
-		case "OPTIONS":
-			fmt.Println(" Options:", requestLine)
-			handleOptions(conn, protocol)
-		case "ANNOUNCE":
-			fmt.Println(" ANNOUNCE:", requestLine)
-			handleAnnounce(conn)
-		case "DESCRIBE":
-			fmt.Println(" DESCRIBE:", requestLine)
-			handleDescribe(conn, protocol, uri)
-		case "SETUP":
-			fmt.Println(" SETUP:", requestLine)
-			handleSetup(conn)
-		case "RECORD":
-			fmt.Println(" RECORD:", requestLine)
-			handleRecord(conn)
-		case "TEARDOWN":
-			handleTeardown(conn)
-		default:
-			fmt.Println("Unhandled method:", method)
 		}
 	}
+}
+
+/*
+*
+处理RTP数据
+*/
+func handleRTP(conn net.Conn, rtspLenB *[]byte, channelId int) {
+	if _, err := io.ReadFull(conn, *rtspLenB); err != nil {
+		fmt.Println("rtp read len error:", err)
+		return
+	}
+	rtspLen := int(binary.BigEndian.Uint16(*rtspLenB))
+	rtpBuff := make([]byte, rtspLen)
+	//channelId 判断通道类型：音频通道，视频通道，音频控制通道，视频控制通道
+	if _, err := io.ReadFull(conn, rtpBuff); err != nil {
+		fmt.Println("Read RTCP frame error:", err)
+		return
+	}
+	fmt.Println("channel id:%s ,rtp len:%s \r\n", channelId, rtspLen)
+	fmt.Println(rtpBuff[:20])
 }
 
 func handleOptions(conn net.Conn, protocol string) {
@@ -96,7 +162,13 @@ func handleOptions(conn net.Conn, protocol string) {
 	conn.Write([]byte(respones))
 }
 
-func handleAnnounce(conn net.Conn) {
+func handleAnnounce(conn net.Conn, session *RtspSession) {
+	video, err := StartVideo()
+	if err != nil {
+		fmt.Println("open tfp server error:", err)
+		return
+	}
+	session.RtpVideoPort = video
 	response := "RTSP/1.0 200 OK\r\n" +
 		"CSeq: 2\r\n" +
 		"\r\n"
@@ -124,26 +196,48 @@ func handleDescribe(conn net.Conn, protocol string, uri string) {
 	conn.Write([]byte(response))
 }
 
-func handleSetup(conn net.Conn) {
-	response := "RTSP/1.0 200 OK\r\n" +
-		"CSeq: 3\r\n" +
-		"Transport: RTP/AVP;unicast;client_port=8000-8001;server_port=9000-9001\r\n" +
-		"Session: 12345678\r\n"
-	conn.Write([]byte(response))
+func handleSetup(conn net.Conn, session *RtspSession, request *Request) {
+	if strings.Contains(request.Protocol, "TCP") { //是否使用TCP传输RTP数据
+		/*response := "RTSP/1.0 200 OK\r\n" +
+			"CSeq: 3\r\n" +
+			"Transport: RTP/AVP;unicast;interleaved=" + request.Interleaved + ";mode=record\r\n" +
+			"Session: " + session.sessionId + "\r\n" +
+			"\r\n"
+		write, err := conn.Write([]byte(response))
+		if err != nil {
+			fmt.Errorf("setup error:", err)
+			return
+		} else {
+			fmt.Println("write len:", write)
+		}*/
+		response := "RTSP/1.0 200 OK\nServer: EasyDarwin/7.3 (Build/17.0325; Platform/Win32; Release/EasyDarwin; State/Development; )\nCseq: 3\nCache-Control: no-cache\nSession: 132169028622239\nDate: Tue, 13 Nov 2018 02:49:48 GMT\nExpires: Tue, 13 Nov 2018 02:49:48 GMT\nTransport: RTP/AVP/TCP;unicast;mode=record;interleaved=0-1" +
+			"\r\n" +
+			"\r\n"
+		conn.Write([]byte(response))
+	} else { //uYT4wxdT:mhpHLE
+		response := "RTSP/1.0 200 OK\r\n" +
+			"CSeq: 3\r\n" +
+			//"Transport: RTP/AVP;unicast;client_port=" + request.ClientPort + ";server_port=9000-9001" + strconv.Itoa(session.RtpVideoPort) + "\r\n" +
+			"Transport: RTP/AVP/UDP;unicast;client_port=" + request.ClientPort + ";server_port=9000-9001\r\n" +
+			"Session: " + session.sessionId + "\r\n" +
+			"\r\n"
+		conn.Write([]byte(response))
+	}
+
 }
 
-func handleRecord(conn net.Conn) {
+func handleRecord(conn net.Conn, session *RtspSession) {
 	response := "RTSP/1.0 200 OK\r\n" +
 		"CSeq: 4\r\n" +
-		"Session: 12345678\r\n" +
+		"Session: " + session.sessionId + "\r\n" +
 		"\r\n"
 	conn.Write([]byte(response))
 }
 
-func handleTeardown(conn net.Conn) {
+func handleTeardown(conn net.Conn, session *RtspSession) {
 	response := "RTSP/1.0 200 OK\r\n" +
 		"CSeq: 5\r\n" +
-		"Session: 12345678\r\n" +
+		"Session: " + session.sessionId + "\r\n" +
 		"\r\n"
 	conn.Write([]byte(response))
 	conn.Close()
@@ -166,4 +260,16 @@ func ListenRTSP() {
 		}
 		go HandleConnection(conn)
 	}
+}
+
+// GenerateSessionID 生成一个随机的 Session ID
+func GenerateSessionID() (string, error) {
+	// 创建一个 16 字节的数组
+	b := make([]byte, 16)
+	// 使用 crypto/rand 包生成随机字节
+	if _, err := io.ReadFull(rand.Reader, b); err != nil {
+		return "", err
+	}
+	// 将字节数组编码为十六进制字符串
+	return hex.EncodeToString(b), nil
 }
