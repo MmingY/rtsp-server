@@ -7,58 +7,100 @@
 ```
 OPTIONS rtsp://example.com/media.sdp RTSP/1.0
 CSeq: 1
+User-Agent: Lavf60.3.100
 ```
 服务器返回支持的方法列表。
 ```
 RTSP/1.0 200 OK
 CSeq: 1
+Session: f2gP-LrSR
 Public: DESCRIBE, SETUP, TEARDOWN, PLAY, PAUSE, OPTIONS, ANNOUNCE, RECORD
 
 ```
 ### 2.发送描述：
 客户端发送 ANNOUNCE 请求，将媒体描述（如 SDP 描述）发送到服务器。
 ```
-DESCRIBE rtsp://example.com/media.sdp RTSP/1.0
+ANNOUNCE rtsp://example.com/media.sdp RTSP/1.0
+Content-Type: application/sdp
 CSeq: 2
-Accept: application/sdp
+User-Agent: Lavf60.3.100
+Session: f2gP-LrSR
+Content-Length: 494
+
+v=0
+o=- 0 0 IN IP4 127.0.0.1
+s=No Name
+c=IN IP4 127.0.0.1
+t=0 0
+a=tool:libavformat 60.3.100
+m=video 0 RTP/AVP 96
+b=AS:3461
+a=rtpmap:96 H264/90000
+a=fmtp:96 packetization-mode=1; sprop-parameter-sets=Z01AKZZWA8ARPyykBAQFAAADA+kAAOpghA==,aMqNSA==; profile-level-id=4D4029
+a=control:streamid=0
+m=audio 0 RTP/AVP 97
+b=AS:189
+a=rtpmap:97 MPEG4-GENERIC/48000/2
+a=fmtp:97 profile-level-id=1;mode=AAC-hbr;sizelength=13;indexlength=3;indexdeltalength=3; config=1190
+a=control:streamid=1
 ```
 服务器确认接收 ANNOUNCE 请求。
 ```
 RTSP/1.0 200 OK
 CSeq: 2
-Content-Base: rtsp://example.com/media.sdp
-Content-Type: application/sdp
-Content-Length: 460
-
-v=0
-o=- 2890844526 2890842807 IN IP4 127.0.0.1
-s=RTSP Session
-m=video 0 RTP/AVP 96
-a=control:streamid=0
-m=audio 0 RTP/AVP 97
-a=control:streamid=1
+Session: f2gP-LrSR
 ```
-### 3.设置传输参数：
+### 3.设置传输参数（每一个流都会有一个“SETUP”，请求“SETUP”的次数是有流的数量决定的，一般情况下会有一个视频流和一个音频流。但是也有例外比如一个视频流和两个音频流，就会有三个“SETUP”请求。）：
 客户端发送 SETUP 请求，指定传输的详细信息（如传输协议、端口等）。
+```
+SETUP rtsp://127.0.0.1:554/stream/streamid=0 RTSP/1.0
+Transport: RTP/AVP/TCP;unicast;interleaved=0-1;mode=record
+CSeq: 3
+User-Agent: Lavf60.3.100
+Session: f2gP-LrSR
+```
+### 4.服务器返回传输参数的确认信息。
+```
+RTSP/1.0 200 OK
+CSeq: 3
+Session: f2gP-LrSR
+Transport: RTP/AVP/TCP;unicast;interleaved=0-1;mode=record
+```
+### 5.设置传输参数：
+客户端发送 SETUP 请求，指定传输的详细信息（如传输协议、端口等）
+```
+SETUP rtsp://127.0.0.1:554/stream/streamid=1 RTSP/1.0
+Transport: RTP/AVP/TCP;unicast;interleaved=2-3;mode=record
+CSeq: 4
+User-Agent: Lavf60.3.100
+Session: f2gP-LrSR
+```
+### 6.服务器返回传输参数的确认信息。
+```
+RTSP/1.0 200 OK
+CSeq: 4
+Session: f2gP-LrSR
+Transport: RTP/AVP/TCP;unicast;interleaved=2-3;mode=record
+```
 
-服务器返回传输参数的确认信息。
-
-### 4.开始推流：
+### 7.开始推流：
 客户端发送 RECORD 请求开始推流。
 ``` 
-RECORD rtsp://example.com/media.sdp RTSP/1.0
+RECORD rtsp://127.0.0.1:554/stream RTSP/1.0
+Range: npt=0.000-
 CSeq: 5
-Session: 12345678
+User-Agent: Lavf60.3.100
+Session: f2gP-LrSR
 ```
-服务器返回确认信息，表示可以开始传输媒体数据。
+### 8.服务器返回确认信息，表示可以开始传输媒体数据。
 ``` 
 RTSP/1.0 200 OK
 CSeq: 5
-Session: 12345678
+Session: f2gP-LrSR
 ```
 客户端通过 RTP/RTCP 传输媒体流到服务器。
 
-### 5.结束推流：
+### 9.结束推流：
 
 客户端发送 TEARDOWN 请求终止会话。
 ``` 
@@ -142,111 +184,3 @@ Session：会话标识符，用于关联后续请求。
 Range：播放范围。
 
 RTP-Info：RTP流的信息。
-
-## 四。RTP
-静态负载类型
-定义: 静态负载类型由IANA（Internet Assigned Numbers Authority）预定义，且在所有RTP会话中具有固定的含义。
-范围: 通常在0到95之间。
-使用: 不需要在SDP中显式声明，因为其含义是标准化的、众所周知的。
-动态负载类型
-定义: 动态负载类型在会话中根据需要分配，可以在96到127之间。其含义由会话中的参与方协商确定。
-范围: 96到127之间。
-使用: 需要在SDP或其他信令协议中显式声明，以告知接收方如何解释这些负载类型。
-
-PT	编码	说明
-0	PCMU	音频，8 kHz, 单声道
-1	Reserved	保留
-2	Reserved	保留
-3	GSM	音频，8 kHz
-4	G723	音频，8 kHz
-5	DVI4	音频，8 kHz
-6	DVI4	音频，16 kHz
-7	LPC	音频，8 kHz
-8	PCMA	音频，8 kHz
-9	G722	音频，8 kHz
-10	L16	音频，44.1 kHz, 立体声
-11	L16	音频，44.1 kHz, 单声道
-12	QCELP	音频
-13	CN	舒适噪声（Comfort Noise）
-14	MPA	音频，90 kHz
-15	G728	音频
-16	DVI4	音频，11.025 kHz
-17	DVI4	音频，22.05 kHz
-18	G729	音频
-19	Reserved	保留
-20	Unassigned	未分配
-21	Unassigned	未分配
-22	Unassigned	未分配
-23	Unassigned	未分配
-24	Unassigned	未分配
-25	CelB	视频
-26	JPEG	视频
-27	Unassigned	未分配
-28	nv	视频
-29	Unassigned	未分配
-30	Unassigned	未分配
-31	H261	视频
-32	MPV	视频
-33	MP2T	视频
-34	H263	视频
-35	Unassigned	未分配
-36	Unassigned	未分配
-37	Unassigned	未分配
-38	Unassigned	未分配
-39	Unassigned	未分配
-40	Unassigned	未分配
-41	Unassigned	未分配
-42	Unassigned	未分配
-43	Unassigned	未分配
-44	Unassigned	未分配
-45	Unassigned	未分配
-46	Unassigned	未分配
-47	Unassigned	未分配
-48	Unassigned	未分配
-49	Unassigned	未分配
-50	Unassigned	未分配
-51	Unassigned	未分配
-52	Unassigned	未分配
-53	Unassigned	未分配
-54	Unassigned	未分配
-55	Unassigned	未分配
-56	Unassigned	未分配
-57	Unassigned	未分配
-58	Unassigned	未分配
-59	Unassigned	未分配
-60	Unassigned	未分配
-61	Unassigned	未分配
-62	Unassigned	未分配
-63	Unassigned	未分配
-64	Unassigned	未分配
-65	Unassigned	未分配
-66	Unassigned	未分配
-67	Unassigned	未分配
-68	Unassigned	未分配
-69	Unassigned	未分配
-70	Unassigned	未分配
-71	Unassigned	未分配
-72	Unassigned	未分配
-73	Unassigned	未分配
-74	Unassigned	未分配
-75	Unassigned	未分配
-76	Unassigned	未分配
-77	Unassigned	未分配
-78	Unassigned	未分配
-79	Unassigned	未分配
-80	Unassigned	未分配
-81	Unassigned	未分配
-82	Unassigned	未分配
-83	Unassigned	未分配
-84	Unassigned	未分配
-85	Unassigned	未分配
-86	Unassigned	未分配
-87	Unassigned	未分配
-88	Unassigned	未分配
-89	Unassigned	未分配
-90	Unassigned	未分配
-91	Unassigned	未分配
-92	Unassigned	未分配
-93	Unassigned	未分配
-94	Unassigned	未分配
-95	Unassigned	未分配
